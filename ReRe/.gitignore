@@ -60,3 +60,7 @@ crashlytics-build.properties
 
 /.vsconfig
 /UserSettings/EditorUserSettings.asset
+
+# HLSLToolsForVidualstudioConfigGenerator
+/ShaderIncludes/
+shadertoolsconfig.json
