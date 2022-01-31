@@ -8,6 +8,7 @@ CBUFFER_START(UnityPerMaterial)
 half3 _BaseColor;
 half _Metallic;
 half _Smoothness;
+half _Subsurface;
 CBUFFER_END
 
 struct Attributes
@@ -31,24 +32,12 @@ inline half Pow5(half x)
     return x * x * x * x * x;
 }
 
-half BRDF_Lambert(half3 diffuse)
-{
-    return diffuse * INV_PI;
-}
-
-half BRDF_DisneyDiffuse(half ndotl, half ndotv, half hdotl, half perceptualRoughness)
-{
-    half fd90 = 0.5 + 2 * hdotl * hdotl * perceptualRoughness;
-    half lightScatter = 1 + (fd90 - 1) * Pow5(1 - ndotl);
-    half viewScatter = 1 + (fd90 - 1) * Pow5(1 - ndotv);
-    return lightScatter * viewScatter * INV_PI;
-}
-
 struct Material
 {
     half3 diffuse;
     half3 specular;
     half perceptualRoughness; // sqrt(alpha)
+    half subsurface; // k_ss
 };
 
 // Setup Material dat
@@ -68,21 +57,74 @@ Material GetMaterial()
     mat.specular = ComputeFresnel0(baseColor, metallic, DEFAULT_SPECULAR_VALUE);
 
     mat.perceptualRoughness = 1 - _Smoothness;
+    mat.subsurface = _Subsurface;
     return mat;
 }
 
-half3 Lighting(half3 viewWS, half3 normalWS, Light light, Material material)
+half3 Lambert(half3 diffuse)
+{
+    return INV_PI * diffuse;
+}
+
+// eq. (9.66)
+half3 DisneyDiffuse(half ndotl,half ndotv, half hdotl, half3 diffuse, half perceptualRoughness, half subsurce)
+{
+    half tl = Pow5(1 - ndotl);
+    half tv = Pow5(1 - ndotv);
+
+    half F_D90 = 0.5 + 2 * perceptualRoughness * hdotl * hdotl;
+    half lightScatter = 1 + (F_D90 - 1) * tl;
+    half viewScatter = 1 + (F_D90 - 1) * tv;
+    half f_d = lightScatter * viewScatter;
+
+    half F_SS90 = perceptualRoughness * hdotl * hdotl;
+    half lightSubsurfaceScatter = 1 + (F_SS90 - 1) * tl;
+    half viewSubsurfaceScatter = 1 + (F_SS90 - 1) * tv;
+    half F_SS = lightSubsurfaceScatter * viewSubsurfaceScatter;
+
+    // eq.(9.67)
+    // Note: (ndotv * ndotl) should be (ndotv + ndotl)
+    float f_ss = (1 / (ndotv + ndotl) - 0.5) * F_SS + 0.5;
+    return ((1 - subsurce) * f_d + 1.25 * subsurce * f_ss) * INV_PI * diffuse;
+}
+
+
+// eq. (9.68)
+half3 HammonDiffuse(half ndotl, half ndotv, half ndoth, half ldotv, half3 diffuse, half3 specular, half roughness)
+{
+    half3 f_smooth = 21 / 20 * (1 - specular) * (1 - Pow5(1 - ndotl)) * (1 - Pow5(1 - ndotv));
+    half k_facing = 0.5 + 0.5 * ldotv;
+    half f_rough = k_facing * (0.9 - 0.4 * k_facing) * (0.5 + ndoth) / max(0.001, ndoth);
+    half f_multi = 0.3641 * roughness;
+    return diffuse * INV_PI * ((1 - roughness) * f_smooth + roughness * f_rough + diffuse * f_multi);
+}
+
+half3 Lighting(half3 view, half3 normal, Light light, Material material)
 {
     // diffuse
     half3 diffuse = material.diffuse;
+    half3 specular = material.specular;
     half3 l = light.direction;
-    half3 h = normalize(viewWS + l);
-    half ndotl = max(0, dot(normalWS, l));
-    half ndotv = max(0, dot(normalWS, l));
-    half hdotl = max(0, dot(h, l));
+    half perceptualRoughness = material.perceptualRoughness;
+    half roughness = perceptualRoughness * perceptualRoughness;
 
-    half brdf = BRDF_DisneyDiffuse(ndotl, ndotv, hdotl, material.perceptualRoughness);
-    return PI * diffuse * brdf * ndotl;
+    half3 h = SafeNormalize(view + l);
+    half ndotl = max(0, dot(normal, l));
+    half ndotv = max(0, dot(normal, view));
+    half ndoth = max(0, dot(normal, h));
+    half hdotl = max(0, dot(h, l));
+    half ldotv = max(0, dot(l, view));
+
+    half3 brdf;
+#if defined(_BRDF_DIFFUSE_LAMBERT)
+    brdf = Lambert(diffuse);
+#elif defined(_BRDF_DIFFUSE_DISNEY)
+    brdf = DisneyDiffuse(ndotl, ndotv, hdotl, diffuse, perceptualRoughness, material.subsurface);
+#elif defined(_BRDF_DIFFUSE_HAMMON)
+    brdf = HammonDiffuse(ndotl, ndotv, ndoth, ldotv, diffuse, specular, roughness);
+#endif
+
+    return PI * brdf * ndotl * light.color;
 }
 
 // Vertex Shader

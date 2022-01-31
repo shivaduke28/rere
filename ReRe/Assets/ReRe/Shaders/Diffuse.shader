@@ -4,8 +4,10 @@ Shader "ReRe/Diffuse"
     {
         _MainTex ("Texture", 2D) = "white" {}
         _BaseColor ("Base Color", Color) = (1, 1, 1, 1)
+        [KeywordEnum(Lambert, Disney, Hammon)] _BRDF_Diffuse("BRDF Diffuse", Float) = 0
         _Metallic ("Metallic", Range(0, 1)) = 0
         _Smoothness("Smoothness", Range(0, 1)) = 0.5
+        _Subsurface("Subsurface", Range(0, 1)) = 0
     }
     SubShader
     {
@@ -52,6 +54,8 @@ Shader "ReRe/Diffuse"
             // ---------------------------------------------------------------------------------------------
             // Unity defined keywords
             #pragma multi_compile_fog
+            // ---------------------------------------------------------------------------------------------
+            #pragma multi_compile _BRDF_DIFFUSE_LAMBERT _BRDF_DIFFUSE_DISNEY _BRDF_DIFFUSE_HAMMON
             // ---------------------------------------------------------------------------------------------
 
             #include "Diffuse.hlsl"
